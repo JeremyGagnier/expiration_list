@@ -1,0 +1,12 @@
+[package]
+name = "expiration_list"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fnv = "1.0.7"
+serde = { version = "1.0", optional = true, features = ["derive"] }
+
+[features]
+default = []
+serde_support = ["serde"]
