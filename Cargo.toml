@@ -1,7 +1,10 @@
 [package]
 name = "expiration_list"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+authors = ["Jeremy Gagnier <jer.gagnier@gmail.com>"]
+description = "A datastructure for items that expire."
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 fnv = "1.0.7"

@@ -10,6 +10,27 @@ use std::{
 /// items or track expiry. It should not be used when the expiration is fixed, in this case
 /// there are other more efficient datastructures such as priority queues.
 ///
+/// Example usage:
+/// ```
+/// use expiration_list::ExpirationList;
+/// # use std::error::Error;
+/// # fn main() -> Result<(), i32> {
+/// 
+/// let mut list = ExpirationList::new();
+/// let value: i32 = 1234;
+/// let id = list.add(value);
+/// assert_eq!(list.get(id), Some(&value));
+/// assert_eq!(list.contains(id), true);
+/// 
+/// let removed_value: i32 = list.remove(id).ok_or(0)?;
+/// assert_eq!(removed_value, value);
+/// assert_eq!(list.get(id), None);
+/// assert_eq!(list.contains(id), false);
+/// 
+/// # Ok(())
+/// # }
+/// ```
+/// 
 /// `ExpirationList` stores new items in a `Vec<Option<T>>`. Removing an item sets it to None.
 /// When more than half of the items in the `Vec` are removed, the `Vec` is shrunk in half.
 /// Any items in the first half that are not yet removed are moved to a `HashMap<usize, T>`.
@@ -43,25 +64,27 @@ pub struct ExpirationList<T> {
 pub struct ExpirationListIterator<'a, T> {
     map_iter: Option<HashMapIter<'a, usize, T>>,
     list_iter: Iter<'a, Option<T>>,
+    list_id: usize,
 }
 
 impl<'a, T> Iterator for ExpirationListIterator<'a, T> {
-    type Item = &'a T;
+    type Item = (usize, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match &mut self.map_iter {
                 Some(map_iter) => {
-                    if let Some((_, value)) = map_iter.next() {
-                        return Some(value);
+                    if let Some((key, value)) = map_iter.next() {
+                        return Some((*key, value));
                     } else {
                         self.map_iter = None; // Continue to list iter
                     }
                 }
                 None => {
                     let next = self.list_iter.next();
+                    self.list_id += 1;
                     match next {
-                        Some(Some(value)) => return Some(value),
+                        Some(Some(value)) => return Some((self.list_id - 1, value)),
                         Some(None) => (), // Continue to next item in the list
                         None => return None,
                     }
@@ -72,25 +95,20 @@ impl<'a, T> Iterator for ExpirationListIterator<'a, T> {
 }
 
 impl<'a, T> IntoIterator for &'a ExpirationList<T> {
-    type Item = &'a T;
+    type Item = (usize, &'a T);
     type IntoIter = ExpirationListIterator<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         ExpirationListIterator {
             list_iter: self.list.iter(),
             map_iter: Some(self.map.iter()),
+            list_id: self.first_id,
         }
     }
 }
 
 impl<T> Default for ExpirationList<T> {
     fn default() -> Self {
-        ExpirationList::new()
-    }
-}
-
-impl<T> ExpirationList<T> {
-    pub fn new() -> Self {
         ExpirationList {
             first_id: 0,
             count: 0,
@@ -98,13 +116,22 @@ impl<T> ExpirationList<T> {
             map: FnvHashMap::default(),
         }
     }
+}
 
+impl<T> ExpirationList<T> {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Adds a new item to the `ExpirationList` and returns its stable ID.
     pub fn add(&mut self, value: T) -> usize {
         self.list.push(Some(value));
         self.count += 1;
         return self.first_id + self.list.len() - 1;
     }
 
+    /// Removes an item by ID and returns `Some(item: T)` when the item was found and `None` when
+    /// the item was not found.
     pub fn remove(&mut self, id: usize) -> Option<T> {
         if id < self.first_id {
             return self.map.remove(&id);
@@ -150,6 +177,7 @@ impl<T> ExpirationList<T> {
         return removed_value;
     }
 
+    /// Takes an item ID and returns `Some(item: &T)` when the item is found and `None` otherwise.
     pub fn get(&self, id: usize) -> Option<&T> {
         if id < self.first_id {
             return self.map.get(&id);
@@ -157,11 +185,23 @@ impl<T> ExpirationList<T> {
         return self.list.get(id - self.first_id)?.as_ref();
     }
 
+    /// Takes an item ID and returns `Some(item: &mut T)` when the item is found and `None`
+    /// otherwise.
     pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
         if id < self.first_id {
             return self.map.get_mut(&id);
         }
         return self.list.get_mut(id - self.first_id)?.as_mut();
+    }
+
+    /// Returns `true` if an item with the given ID exists. Returns `false` otherwise.
+    pub fn contains(&self, id: usize) -> bool {
+        if id < self.first_id {
+            return self.map.contains_key(&id);
+        } else if let Some(Some(_)) = self.list.get(id) {
+            return true;
+        }
+        return false;
     }
 }
 
@@ -237,7 +277,8 @@ mod tests {
         list.remove(10_008);
 
         let mut result: Vec<i32> = Vec::new();
-        for value in &list {
+        for (key, value) in &list {
+            assert_eq!(key as i32 - 10_000, *value);
             result.push(*value);
         }
 
