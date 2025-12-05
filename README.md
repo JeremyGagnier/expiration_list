@@ -4,18 +4,39 @@ A datastructure for items that expire.
 
 `ExpirationList` is more performant than a `HashMap` for items that are likely to be removed over time and require a stable ID which can be a `usize`. It does not automatically remove items or track expiry. It should not be used when the expiration is fixed, in this case there are other more efficient datastructures such as priority queues.
 
-Example usage:
+## Examples
+
+Add and remove:
 ```rust
+use expiration_list::ExpirationList;
+
 let mut list = ExpirationList::new();
 let value: i32 = 1234;
 let id = list.add(value);
 assert_eq!(list.get(id), Some(&value));
-assert_eq!(list.contains(id), true);
 
 let removed_value: i32 = list.remove(id).ok_or(0)?;
 assert_eq!(removed_value, value);
 assert_eq!(list.get(id), None);
-assert_eq!(list.contains(id), false);
+```
+
+Adding and removing many items:
+```rust
+use expiration_list::ExpirationList;
+
+let mut list = ExpirationList::new();
+for idx in 0..10_000 {
+	list.add(idx);
+}
+assert!(list.capacity() >= 10_000);
+
+for idx in 0..(10_000 - 10) {
+	list.remove(idx);
+}
+
+assert_eq!(list.len(), 10);
+// The capacity of the inner structures are reduced
+assert_eq!(list.capacity(), 40);
 ```
 
 ## License

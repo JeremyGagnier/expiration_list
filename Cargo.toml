@@ -1,6 +1,6 @@
 [package]
 name = "expiration_list"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 authors = ["Jeremy Gagnier <jer.gagnier@gmail.com>"]
 description = "A datastructure for items that expire."

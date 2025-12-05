@@ -1,8 +1,13 @@
+//! A datastructure for items that expire.
+
 use fnv::{FnvHashMap, FnvHasher};
 use std::{
-    collections::{HashMap, hash_map::Iter as HashMapIter},
+    collections::{
+        HashMap,
+        hash_map::{Iter as HashMapIter, IterMut as HashMapIterMut},
+    },
     hash::BuildHasherDefault,
-    slice::Iter,
+    slice::{Iter, IterMut},
 };
 
 /// `ExpirationList` is more performant than a `HashMap` for items that are likely to be removed
@@ -10,27 +15,50 @@ use std::{
 /// items or track expiry. It should not be used when the expiration is fixed, in this case
 /// there are other more efficient datastructures such as priority queues.
 ///
-/// Example usage:
+/// # Examples
+///
+/// Add and remove:
 /// ```
 /// use expiration_list::ExpirationList;
 /// # use std::error::Error;
 /// # fn main() -> Result<(), i32> {
-/// 
+///
 /// let mut list = ExpirationList::new();
 /// let value: i32 = 1234;
 /// let id = list.add(value);
 /// assert_eq!(list.get(id), Some(&value));
-/// assert_eq!(list.contains(id), true);
-/// 
+///
 /// let removed_value: i32 = list.remove(id).ok_or(0)?;
 /// assert_eq!(removed_value, value);
 /// assert_eq!(list.get(id), None);
-/// assert_eq!(list.contains(id), false);
-/// 
+///
 /// # Ok(())
 /// # }
 /// ```
-/// 
+///
+/// Adding and removing many items:
+/// ```
+/// use expiration_list::ExpirationList;
+/// # fn main() {
+///
+/// let mut list = ExpirationList::new();
+/// for idx in 0..10_000 {
+///     list.add(idx);
+/// }
+/// assert!(list.capacity() >= 10_000);
+///
+/// for idx in 0..(10_000 - 10) {
+///     list.remove(idx);
+/// }
+///
+/// assert_eq!(list.len(), 10);
+/// // The capacity of the inner structures are reduced
+/// assert_eq!(list.capacity(), 40);
+/// # }
+/// ```
+///
+/// # Implementation
+///
 /// `ExpirationList` stores new items in a `Vec<Option<T>>`. Removing an item sets it to None.
 /// When more than half of the items in the `Vec` are removed, the `Vec` is shrunk in half.
 /// Any items in the first half that are not yet removed are moved to a `HashMap<usize, T>`.
@@ -61,14 +89,45 @@ pub struct ExpirationList<T> {
     map: HashMap<usize, T, BuildHasherDefault<FnvHasher>>,
 }
 
-pub struct ExpirationListIterator<'a, T> {
+pub struct ExpirationListIter<'a, T> {
     map_iter: Option<HashMapIter<'a, usize, T>>,
     list_iter: Iter<'a, Option<T>>,
     list_id: usize,
 }
+pub struct ExpirationListIterMut<'a, T> {
+    map_iter: Option<HashMapIterMut<'a, usize, T>>,
+    list_iter: IterMut<'a, Option<T>>,
+    list_id: usize,
+}
 
-impl<'a, T> Iterator for ExpirationListIterator<'a, T> {
+impl<'a, T> Iterator for ExpirationListIter<'a, T> {
     type Item = (usize, &'a T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match &mut self.map_iter {
+                Some(map_iter) => {
+                    if let Some((key, value)) = map_iter.next() {
+                        return Some((*key, value));
+                    } else {
+                        self.map_iter = None; // Continue to list iter
+                    }
+                }
+                None => {
+                    let next = self.list_iter.next();
+                    self.list_id += 1;
+                    match next {
+                        Some(Some(value)) => return Some((self.list_id - 1, value)),
+                        Some(None) => (), // Continue to next item in the list
+                        None => return None,
+                    }
+                }
+            }
+        }
+    }
+}
+impl<'a, T> Iterator for ExpirationListIterMut<'a, T> {
+    type Item = (usize, &'a mut T);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -96,12 +155,24 @@ impl<'a, T> Iterator for ExpirationListIterator<'a, T> {
 
 impl<'a, T> IntoIterator for &'a ExpirationList<T> {
     type Item = (usize, &'a T);
-    type IntoIter = ExpirationListIterator<'a, T>;
+    type IntoIter = ExpirationListIter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        ExpirationListIterator {
+        ExpirationListIter {
             list_iter: self.list.iter(),
             map_iter: Some(self.map.iter()),
+            list_id: self.first_id,
+        }
+    }
+}
+impl<'a, T> IntoIterator for &'a mut ExpirationList<T> {
+    type Item = (usize, &'a mut T);
+    type IntoIter = ExpirationListIterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ExpirationListIterMut {
+            list_iter: self.list.iter_mut(),
+            map_iter: Some(self.map.iter_mut()),
             list_id: self.first_id,
         }
     }
@@ -202,6 +273,14 @@ impl<T> ExpirationList<T> {
             return true;
         }
         return false;
+    }
+
+    pub fn len(&self) -> usize {
+        self.count + self.map.len()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.list.capacity() + self.map.capacity()
     }
 }
 
